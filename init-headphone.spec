@@ -9,7 +9,9 @@ Source0:	https://github.com/letitz/%{name}/archive/master.tar.gz
 
 BuildArch:  noarch
 
+BuildRequires: systemd
 Requires:	i2c-tools-python
+Requires:   systemd
 
 %description
 This script fixes a bug in Clevo W230SS-based laptops where the headphone jack
@@ -29,7 +31,7 @@ make install DESTDIR=%{buildroot}
 %files
 %{_sbindir}/init-headphone
 %{_sysconfdir}/sysconfig/modules/init-headphone.modules
-%{_libdir}/systemd/system/init-headphone.service
+%{_unitdir}/init-headphone.service
 
 %changelog
 
