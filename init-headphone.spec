@@ -34,8 +34,10 @@ make install DESTDIR=%{buildroot}
 
 %post
 %systemd_post init-headphone.service
+systemctl enable init-headphone
 
 %preun
+systemctl disable init-headphone
 %systemd_preun init-headphone.service
 
 %postun
