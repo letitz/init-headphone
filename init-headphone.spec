@@ -4,8 +4,10 @@ Release:	1%{?dist}
 Summary:	Reactivates the headphone jack on Clevo W230SS after suspend
 
 License:	GPLv2
-URL:		https://bugs.launchpad.net/ubuntu/+source/alsa-driver/+bug/1313904/
-Source0:	https://github.com/letitz/%{name}/archive/master.tar.gz
+URL:		https://github.com/letitz/%{name}
+
+%global commit 6d929443daed3a0f5421f6585af9c7f67940182a
+Source0:	https://github.com/letitz/%{name}/archive/%{commit}/%{name}-%{commit}.tar.gz
 
 BuildArch:  noarch
 
@@ -20,7 +22,7 @@ This script fixes a bug in Clevo W230SS-based laptops where the headphone jack
 would not work anymore after a resume from suspend.
 
 %prep
-%setup -qn %{name}
+%setup -qn %{name}-%{commit}
 
 
 %build
