@@ -6,7 +6,7 @@ laptops.
 
 ## Installation
 
-Download the latest RPM from [here](https://github.com/letitz/init-headphone/releases), or from the command line:
+Download the latest RPM from [here](https://github.com/letitz/init-headphone/releases/latest), or from the command line:
 ```sh
 $ wget https://github.com/letitz/init-headphone/releases/download/0.2.0/init-headphone-0.2.0-1.fc21.noarch.rpm
 ```
