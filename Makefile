@@ -1,15 +1,12 @@
-PROG=init-headphone
-VERSION=0.2.0
-SRCDIR=src
-TARBALL=${PROG}-${VERSION}.tar.gz
+SBINDIR=usr/sbin
+SYSCONFIGDIR=etc
+LIBDIR=usr/lib
 
-all: pkg
+all:
 
-pkg: ${TARBALL}
-
-${TARBALL}: ${SRCDIR}/*
-	tar -czf $@ $^
-
-clean:
-	rm -rf ${TARBALL}
+install:
+	install -Dm 755 init-headphone ${DESTDIR}/${SBINDIR}/init-headphone
+	install -Dm 755 init-headphone.modules ${DESTDIR}/${SYSCONFIGDIR}/sysconfig/modules/init-headphone.modules
+	install -Dm 755 init-headphone.service ${DESTDIR}/${LIBDIR}/systemd/system/init-headphone.service
+	systemctl enable init-headphone
 
