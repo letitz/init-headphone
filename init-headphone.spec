@@ -11,14 +11,16 @@ BuildArch:  noarch
 
 BuildRequires: systemd
 Requires:	i2c-tools-python
-Requires:   systemd
+Requires(post): systemd
+Requires(preun): systemd
+Requires(postun): systemd
 
 %description
 This script fixes a bug in Clevo W230SS-based laptops where the headphone jack
 would not work anymore after a resume from suspend.
 
 %prep
-%setup -qn %{name}-master
+%setup -qn %{name}
 
 
 %build
@@ -27,6 +29,15 @@ would not work anymore after a resume from suspend.
 
 %install
 make install DESTDIR=%{buildroot}
+
+%post
+%systemd_post init-headphone.service
+
+%preun
+%systemd_preun init-headphone.service
+
+%postun
+%systemd_postun
 
 %files
 %{_sbindir}/init-headphone
