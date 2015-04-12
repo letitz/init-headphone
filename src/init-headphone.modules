@@ -1,0 +1,5 @@
+#!/bin/sh
+
+if [ ! -d /sys/class/i2c-dev ] ; then
+        exec /sbin/modprobe i2c_dev >/dev/null 2>&1       
+fi
