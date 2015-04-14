@@ -6,7 +6,7 @@ Summary:	Reactivates the headphone jack on Clevo W230SS after suspend
 License:	GPLv2
 URL:		https://github.com/letitz/%{name}
 
-%global commit 6d929443daed3a0f5421f6585af9c7f67940182a
+%global commit 843da720f3531a0ae6860130c5baa1f8e2ba7d1b
 Source0:	https://github.com/letitz/%{name}/archive/%{commit}/%{name}-%{commit}.tar.gz
 
 BuildArch:  noarch
