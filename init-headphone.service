@@ -4,7 +4,7 @@ After=suspend.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/init-headphone
+ExecStart=/usr/sbin/init-headphone
 
 [Install]
 WantedBy=suspend.target
