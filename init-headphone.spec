@@ -6,7 +6,7 @@ Summary:	Reactivates the headphone jack on some Clevo laptops after suspend
 License:	GPLv3
 URL:		https://github.com/letitz/%{name}
 
-%global commit 843da720f3531a0ae6860130c5baa1f8e2ba7d1b
+%global commit e4ea070f1f8e1563621f004af4566f8274765a1c
 Source0:	https://github.com/letitz/%{name}/archive/%{commit}/%{name}-%{commit}.tar.gz
 
 BuildArch:  noarch
