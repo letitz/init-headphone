@@ -1,149 +1,319 @@
-#!/usr/bin/env python2
+#!/usr/bin/env python
 
-from __future__ import print_function
-import subprocess
+#    This program is free software: you can redistribute it and/or modify
+#    it under the terms of the GNU General Public License as published by
+#    the Free Software Foundation, either version 3 of the License, or
+#    (at your option) any later version.
+#
+#    This program is distributed in the hope that it will be useful,
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#    GNU General Public License for more details.
+#
+#    You should have received a copy of the GNU General Public License
+#    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Copyright 2015 Unrud <unrud@openaliasbox.org>
+
+import argparse
+import ctypes
+import logging
 import os
-import sys
+import subprocess
+import traceback
 
-SUPPORTED_SYSTEM_PRODUCT_NAMES = ["W230SS"]
-SUPPORTED_I2C_BUS_NAMES = ["SMBus I801 adapter at f040"]
+__all__ = ["init", "set_mute", "set_effect", "recovery"]
+
+VERSION = "0.10"
+SUPPORTED_I2C_BUS_NAMES = ["SMBus I801 adapter"]
 I2C_CLASS_PATH = "/sys/class/i2c-dev"
+DEV_PATH = "/dev"
 CMDLINE_PATH = "/proc/cmdline"
 KERNEL_PARAMETER = "acpi_enforce_resources=lax"
 MODULES_PATH = "/proc/modules"
+REQUIRED_MODULES = ["i2c_dev", "i2c_i801"]
 DEVICE_ADDRESS = 0x73
-DATA = [
-#    CMD   Data0
-    [0x0A, 0x41],
-    [0x04, 0xEE],
-    [0x09, 0xFF],
+DATA_DISABLE_OUTPUT = [
+#    CMD   Value
     [0x00, 0x86],
-    [0x04, 0xEE],
-    [0x05, 0x03],
-    [0x07, 0x40],
-    [0x08, 0x84],
-    [0x09, 0xFF],
+]
+DATA_ENABLE_OUTPUT = [
+#    CMD   Value
     [0x00, 0x82],
 ]
+DATA_EFFECTS = list(map(lambda a: list(zip([0x04, 0x05, 0x07, 0x08, 0x09], a)), [
+#    Values for CMD
+#    0x04  0x05  0x07  0x08  0x09
+    [0x11, 0x02, 0x22, 0x82, 0x22],
+    [0xee, 0x03, 0x40, 0x84, 0xff],
+    [0xaa, 0x23, 0x40, 0x84, 0x00],
+    [0xaa, 0x22, 0x33, 0x84, 0x00],
+    [0x88, 0x03, 0x23, 0x82, 0x22],
+    [0xaa, 0x23, 0x41, 0x84, 0x00],
+    [0xaa, 0x02, 0x43, 0x82, 0x00],
+]))
+EFFECTS_INFO = {
+    0: "no change",
+    1: "bass boost",
+    4: "boost everything",
+}
+DATA_RECOVERY = [
+#    CMD   Value
+    [0x0b, 0x82],
+    [0x0b, 0x92],
+]
+DEFAULT_EFFECT = 1
+I2C_SLAVE = 0x0703
+I2C_SMBUS = 0x0720
+I2C_SMBUS_BLOCK_MAX = 32
+I2C_SMBUS_READ = 1
+I2C_SMBUS_WRITE = 0
+I2C_SMBUS_BYTE_DATA = 2
 
-def get_system_product_name():
+
+class i2c_smbus_data(ctypes.Union):
+    _fields_ = [("byte", ctypes.c_ubyte),
+                ("word", ctypes.c_ushort),
+                ("block", ctypes.c_ubyte * (I2C_SMBUS_BLOCK_MAX + 2))]
+
+
+class i2c_smbus_ioctl_data(ctypes.Structure):
+    _fields_ = [("read_write", ctypes.c_ubyte),
+                ("command", ctypes.c_ubyte),
+                ("size", ctypes.c_uint),
+                ("data", ctypes.POINTER(i2c_smbus_data))]
+
+
+class SMBus(object):
+    def __init__(self, path):
+        self.__logger = logging.getLogger("SMBus")
+        self.__logger.info("Opening I2C bus: %s" % path)
+        try:
+            self.__fd = os.open(path, os.O_RDWR)
+        except Exception as e:
+            self.__logger.error("Can't open file: %s" % path)
+            raise e
+        self.__libc = ctypes.cdll.LoadLibrary("libc.so.6")
+        self.__address = None
+
+    @property
+    def address(self):
+        return self.__address
+
+    @address.setter
+    def address(self, address):
+        self.__logger.info("Setting I2C slave address: %d" % address)
+        if self.__address != address:
+            err = self.__libc.ioctl(self.__fd, I2C_SLAVE, address)
+            if err != 0:
+                self.__logger.error("Can't set I2C slave address")
+                raise RuntimeError("Can't set I2C slave address")
+            self.__address = address
+
+    def __access(self, read_write, device_cmd, size, data):
+        if self.__address is None:
+            self.__logger.error("No I2C slave address set")
+            raise RuntimeError("No I2C slave address set")
+        args = i2c_smbus_ioctl_data()
+        args.read_write = read_write
+        args.command = device_cmd
+        args.size = size
+        args.data = ctypes.pointer(data)
+        err = self.__libc.ioctl(self.__fd, I2C_SMBUS, ctypes.byref(args))
+        if err != 0:
+            self.__logger.error("Can't transfer data on I2C bus")
+            raise RuntimeError("Can't transfer data on I2C bus")
+
+    def write_byte_data(self, device_cmd, value):
+        self.__logger.info("Writing byte data on I2C bus: (device_cmd: 0x%x, value: 0x%x)" % (device_cmd, value))
+        data = i2c_smbus_data()
+        data.byte = value
+        self.__access(I2C_SMBUS_WRITE, device_cmd, I2C_SMBUS_BYTE_DATA, data)
+
+    def read_byte_data(self, device_cmd):
+        data = i2c_smbus_data()
+        self.__access(I2C_SMBUS_READ, device_cmd, I2C_SMBUS_BYTE_DATA, data)
+        result = data.byte & 0xff
+        self.__logger.info("Read byte data on I2C bus: (device_cmd: 0x%x, value: 0x%x)" % (device_cmd, result))
+        return result
+
+    def close(self):
+        self.__logger.info("Closing I2C bus")
+        os.close(self.__fd)
+
+
+def check_root():
+    if os.geteuid() != 0:
+        logging.warning("This program needs root privileges")
+
+
+def check_cmdline():
     try:
-        return subprocess.check_output(["dmidecode", "-s", "system-product-name"]
-                                       ).strip()
-    except OSError:
-        print("Error: dmidecode is not installed", file=sys.stderr)
-        return False
-    except subprocess.CalledProcessError:
-        print("Error: dmidecode returned non-zero exit status", file=sys.stderr)
-        return False
+        cmdline_file = open(CMDLINE_PATH, "r")
+    except:
+        logging.warning("Can't open file: %s" % CMDLINE_PATH)
+        return
+    cmdline_parameters = cmdline_file.read().split()
+    cmdline_file.close()
+    if KERNEL_PARAMETER not in cmdline_parameters:
+        logging.warning("Kernel parameter is missing: %s" % KERNEL_PARAMETER)
+
+
+def check_modules():
+    try:
+        modules_file = open(MODULES_PATH, "r")
+    except:
+        logging.warning("Can't open file: %s")
+        return
+    loaded_modules = [line.split()[0] for line in modules_file.readlines()]
+    for required_module in REQUIRED_MODULES:
+        if required_module not in loaded_modules:
+            logging.warning("Module is not loaded: %s" % required_module)
+
 
 def get_i2c_busses():
     busses = []
     try:
         i2c_directories = os.listdir(I2C_CLASS_PATH)
-    except OSError:
-        print("Error: Can't list directory I2C_CLASS_PATH (%s)" % I2C_CLASS_PATH,
-              file=sys.stderr)
-        return False
+    except Exception as e:
+        logging.error("Can't list directory: %s" % I2C_CLASS_PATH)
+        raise e
     for i2c_dev in i2c_directories:
-        with open(os.path.join(I2C_CLASS_PATH, i2c_dev, "name")) as name_file:
-            i2c_dev_name = name_file.read().strip()
-        with open(os.path.join(I2C_CLASS_PATH, i2c_dev, "dev")) as dev_file:
-            i2c_dev_major, i2c_dev_minor = dev_file.read().strip().split(":")
-            i2c_dev_major = int(i2c_dev_major)
-            i2c_dev_minor = int(i2c_dev_minor)
-        busses.append((i2c_dev_name, i2c_dev_minor))
+        path = os.path.join(I2C_CLASS_PATH, i2c_dev, "name")
+        try:
+            with open(path) as name_file:
+                i2c_dev_name = name_file.read().strip()
+        except Exception as e:
+            logging.warning("Can't open file: %s" % path)
+            continue
+        busses.append((i2c_dev_name, i2c_dev))
     return busses
 
-def check_root():
-    if os.geteuid() != 0:
-        print("Warning: This program needs root privileges", file=sys.stderr)
-    return True
 
-def check_cmdline():
-    try:
-        cmdline_file = open(CMDLINE_PATH, "r")
-    except IOError:
-        print("Warning: Can't open file CMDLINE_PATH (%s)" % CMDLINE_PATH,
-              file=sys.stderr)
-        return True
-    cmdline_parameters = cmdline_file.read().split()
-    cmdline_file.close()
-    if KERNEL_PARAMETER not in cmdline_parameters:
-        print("Warning: Kernel parameter %s is missing" % KERNEL_PARAMETER,
-              file=sys.stderr)
-    return True
-
-def check_modules():
-    try:
-        modules_file = open(MODULES_PATH, "r")
-    except IOError:
-        print("Warning: Can't open file MODULES_PATH (%s)" % MODULES_PATH,
-              file=sys.stderr)
-        return True
-    module_i2c_dev_found = False
-    module_i2c_i801_found = False
-    for line in modules_file.readlines():
-        if "i2c_dev" == line.split()[0]:
-            module_i2c_dev_found = True
-        if "i2c_i801" == line.split()[0]:
-            module_i2c_i801_found = True
-    if not module_i2c_dev_found:
-        print("Warning: Module i2c_dev is not loaded", file=sys.stderr)
-    if not module_i2c_i801_found:
-        print("Warning: Module i2c_i801 is not loaded", file=sys.stderr)
-    return True
-
-def init_headphone():
-    try:
-        import smbus
-    except ImportError:
-        print("Error: Python module smbus not installed", file=sys.stderr)
-        return False
-    if  check_root() == False:
-        return False
-    system_product_name = get_system_product_name()
-    if system_product_name == False:
-        return False
-    if system_product_name not in SUPPORTED_SYSTEM_PRODUCT_NAMES:
-        print("Error: Unsupported system: %s" % system_product_name,
-              file=sys.stderr)
-        print("Supported systems:\n%s" % "".join(map(lambda e: "    %s\n" % e,
-                                                     SUPPORTED_SYSTEM_PRODUCT_NAMES)),
-              end="")
-        return False
-    if check_cmdline() == False:
-        return False
-    if check_modules() == False:
-        return False
+def do_checks_and_get_i2c_bus():
+    check_root()
+    check_cmdline()
+    check_modules()
     i2c_busses = get_i2c_busses()
-    if i2c_busses == False:
-        return False
-    selected_i2c_bus_minor = None
+    selected_i2c_dev = None
     selected_i2c_bus_name = None
-    for i2c_bus_name, i2c_bus_minor in i2c_busses:
-        if i2c_bus_name in SUPPORTED_I2C_BUS_NAMES:
-            selected_i2c_bus_minor = i2c_bus_minor
-            selected_i2c_bus_name = i2c_bus_name
-    if selected_i2c_bus_minor == None:
-        print("Error: Can't find i2c bus", file=sys.stderr)
-        print("Found:\n%s" % "".join(map(lambda e: "    %s\n" % e[0],
-                                         i2c_busses)), end="")
-        print("Looked for:\n%s" % "".join(map(lambda e: "    %s\n" % e,
-                                              SUPPORTED_I2C_BUS_NAMES)), end="")
-        return False
+    logging.debug("Available i2c busses: %s" % list(map(lambda a: a[0],
+                                                        i2c_busses)))
+    logging.debug("Supported i2c bus names: %s" % SUPPORTED_I2C_BUS_NAMES)
+    for i2c_bus_name, i2c_dev in i2c_busses:
+        for supported_name in SUPPORTED_I2C_BUS_NAMES:
+            if supported_name in i2c_bus_name:
+                selected_i2c_dev = i2c_dev
+                selected_i2c_bus_name = i2c_bus_name
+    if selected_i2c_dev is None:
+        logging.error("Can't find i2c bus")
+        raise RuntimeError("Can't find i2c bus")
+    logging.debug("Selected i2c bus: %s" % selected_i2c_bus_name)
+    i2c_dev_path = os.path.join(DEV_PATH, selected_i2c_dev)
+    i2c_bus = SMBus(i2c_dev_path)
+    return i2c_bus
 
+
+def prolog(i2c_bus):
+    i2c_bus.write_byte_data(0x0a, 0x41)
+    for device_cmd in [0x04, 0x09]:
+        value = i2c_bus.read_byte_data(device_cmd)
+        i2c_bus.write_byte_data(device_cmd, value)
+
+
+def write_data_to_device(data):
+    i2c_bus = do_checks_and_get_i2c_bus()
     try:
-        i2c_bus = smbus.SMBus(selected_i2c_bus_minor)
-    except IOError:
-        print("Error: Can't access i2c bus (%s)" % selected_i2c_bus_name,
-              file=sys.stderr)
-        return False
-    for device_cmd, device_data in DATA:
-        i2c_bus.write_byte_data(DEVICE_ADDRESS, device_cmd, device_data)
-    i2c_bus.close()
-    return True
+        i2c_bus.address = DEVICE_ADDRESS
+        prolog(i2c_bus)
+        for device_cmd, device_data in data:
+            i2c_bus.write_byte_data(device_cmd, device_data)
+    finally:
+        i2c_bus.close()
+
+
+def init():
+    set_effect(DEFAULT_EFFECT)
+
+
+def set_mute(b):
+    if b:
+        write_data_to_device(DATA_DISABLE_OUTPUT)
+    else:
+        write_data_to_device(DATA_ENABLE_OUTPUT)
+
+
+def set_effect(i):
+    if i < 0 or i >= len(DATA_EFFECTS):
+        logging.error("Invalid effect")
+        raise ValueError("Invalid effect")
+    write_data_to_device(DATA_DISABLE_OUTPUT +
+                         DATA_EFFECTS[i] +
+                         DATA_ENABLE_OUTPUT)
+
+
+def recovery():
+    write_data_to_device(DATA_RECOVERY)
+
+
+def parse_args():
+    commands_help = {
+        "init": "initialize amplifier (with effect1)",
+        "mute": "turn output off",
+        "unmute": "turn output on",
+    }
+    for i in EFFECTS_INFO:
+        commands_help["effect%d" % i] = EFFECTS_INFO[i]
+    commands = (["init"] + ["effect%d" % i for i in range(len(DATA_EFFECTS))] +
+                ["mute", "unmute", "recovery"])
+    epilog = "\navailable commands:\n"
+    for command in commands:
+        command_help = commands_help.get(command)
+        if command_help:
+            epilog += "  %- 15s%s\n" % (command, command_help)
+        else:
+            epilog += "  %s\n" % command
+    parser = argparse.ArgumentParser(
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description="Manage the headphone amplifier found in some Clevo laptops", epilog=epilog)
+    parser.add_argument("--version", action="version", version="%(prog)s " + VERSION)
+    parser.add_argument("-v", "--verbose", help="increase output verbosity",
+                        action="store_true")
+    parser.add_argument("-f", "--force", action="store_true",
+                        help="for compatibility with previous versions")
+    parser.add_argument("command", nargs="?", choices=commands, metavar="command",
+                        default="init",
+                        help="see the list of available commands below, "
+                             "init is the default if the argument is omitted")
+    args = parser.parse_args()
+    return args
+
+
+def main():
+    args = parse_args()
+    if args.verbose:
+        logging.getLogger().setLevel(logging.DEBUG)
+    logging.info("Version: %s" % VERSION)
+    if args.force:
+        logging.warning("The -f, --force argument is deprecated")
+    command = args.command
+    if command == "init":
+        init()
+    elif command.startswith("effect"):
+        i = int(command[len("effect"):])
+        set_effect(i)
+    elif command == "mute":
+        set_mute(True)
+    elif command == "unmute":
+        set_mute(False)
+    elif command == "recovery":
+        recovery()
+
 
 if __name__ == "__main__":
-    success = init_headphone()
-    exit(0 if success else 1)
+    try:
+        main()
+    except Exception as e:
+        logging.error("Operation failed")
+        logging.debug("Exception occurred:\n%s" % traceback.format_exc())
+        exit(1)

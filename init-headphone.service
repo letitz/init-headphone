@@ -1,11 +1,14 @@
 [Unit]
 Description=Reactivate headphones after sleep
 After=suspend.target
+After=hibernate.target
+After=hybrid-sleep.target
 
 [Service]
-Type=simple
-ExecStart=/usr/sbin/init-headphone
+Type=oneshot
+ExecStart=/usr/sbin/init-headphone effect0
 
 [Install]
-WantedBy=suspend.target
-
+WantedBy=sleep.target
+WantedBy=hibernate.target
+WantedBy=hybrid-sleep.target
